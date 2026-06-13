@@ -58,6 +58,11 @@ static mount_t mounts[MAX_MOUNTS];
 static spinlock_t vfs_lock = SPINLOCK_INIT;
 static spinlock_t stdin_lock = SPINLOCK_INIT;
 
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
+};
+
 // Safely copy a NUL-terminated string from user-space into a kernel buffer.
 // Returns 0 on success, -EFAULT if the pointer is invalid.
 static int copy_user_string(const char *user_str, char *kbuf, size_t kbuf_size) {
@@ -716,12 +721,15 @@ void sys_brk(syscall_frame_t *frame) {
         return;
     }
 
-    // Align to page boundary
-    uint64_t new_brk = (addr + 0xFFF) & ~0xFFFULL;
-    uint64_t old_brk = (current_task_ptr->brk + 0xFFF) & ~0xFFFULL;
+    // Align both old and new brk to page boundaries.
+    // Use floor-alignment for old_brk so we don't unmap a page that is still
+    // partially in use, and ceil-alignment for new_brk so the full requested
+    // range is backed when growing.
+    uint64_t new_brk = (addr + 0xFFFULL) & ~0xFFFULL;
+    uint64_t old_brk = current_task_ptr->brk & ~0xFFFULL;
 
     if (new_brk > old_brk) {
-        // Map new pages
+        // Map new pages for heap growth
         for (uint64_t a = old_brk; a < new_brk; a += 4096) {
             if (get_vmm_phys(current_task_ptr->ctx, a) == 0) {
                 void *page = pmalloc();
@@ -734,6 +742,11 @@ void sys_brk(syscall_frame_t *frame) {
                         VMM_USER | VMM_WRITABLE | VMM_NX);
                 memset_vmm(current_task_ptr->ctx, a, 0, 4096);
             }
+        }
+    } else if (new_brk < old_brk) {
+        // Unmap pages for heap shrink
+        for (uint64_t a = new_brk; a < old_brk; a += 4096) {
+            unmap_vmm(current_task_ptr->ctx, a);
         }
     }
 
@@ -2266,4 +2279,44 @@ void sys_fchmodat(syscall_frame_t *frame) {
     if (current_task_ptr->euid != 0 && current_task_ptr->euid != file.uid) { frame->rax = (uint64_t)-EPERM; return; }
 
     frame->rax = (uint64_t)chmod_rootfs(abs_path, mode);
+}
+
+void sys_writev(syscall_frame_t *frame) {
+    int fd = (int)frame->rdi;
+    const struct iovec *iov = (const struct iovec *)frame->rsi;
+    int iovcnt = (int)frame->rdx;
+
+    if (!iov || iovcnt < 0) { frame->rax = (uint64_t)-EINVAL; return; }
+    
+    int64_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        struct iovec kio;
+        read_vmm(current_task_ptr->ctx, &kio, (uint64_t)&iov[i], sizeof(struct iovec));
+        
+        if (kio.iov_len == 0) continue;
+        
+        syscall_frame_t tmp_frame = *frame;
+        tmp_frame.rdi = fd;
+        tmp_frame.rsi = (uint64_t)kio.iov_base;
+        tmp_frame.rdx = kio.iov_len;
+        
+        sys_write(&tmp_frame);
+        
+        int64_t res = (int64_t)tmp_frame.rax;
+        if (res < 0) {
+            if (total == 0) total = res;
+            break;
+        }
+        total += res;
+        if ((size_t)res < kio.iov_len) break;
+    }
+    frame->rax = (uint64_t)total;
+}
+
+void sys_set_tid_address(syscall_frame_t *frame) {
+    frame->rax = (uint64_t)current_task_ptr->pid;
+}
+
+void sys_exit_group(syscall_frame_t *frame) {
+    sys_exit(frame);
 }

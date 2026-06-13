@@ -15,6 +15,7 @@ static syscall_fn_t syscall_table[] = {
     [SYS_close]        = sys_close,
     [SYS_stat]         = sys_stat,
     [SYS_fstat]        = sys_fstat,
+    [SYS_writev]       = sys_writev,
     [SYS_lseek]        = sys_lseek,
     [SYS_mmap]         = sys_mmap,
     [SYS_mprotect]     = sys_mprotect,
@@ -80,13 +81,20 @@ static syscall_fn_t syscall_table[] = {
     [SYS_fchmodat]     = sys_fchmodat,
     [SYS_getsockopt]   = sys_getsockopt,
     [SYS_setsockopt]   = sys_setsockopt,
+    [SYS_set_tid_address] = sys_set_tid_address,
+    [SYS_exit_group]   = sys_exit_group,
 };
 
 extern void syscall_entry(void);
 
 void syscall_dispatch(syscall_frame_t *frame) {
-    if (frame->rax < (sizeof(syscall_table) / sizeof(syscall_table[0])) && syscall_table[frame->rax]) syscall_table[frame->rax](frame);
-    else frame->rax = (uint64_t)-ENOSYS;
+    // printf("syscall: %lu (arg1: %p, arg2: %p, arg3: %p)\n", frame->rax, (void*)frame->rdi, (void*)frame->rsi, (void*)frame->rdx);
+    if (frame->rax < (sizeof(syscall_table) / sizeof(syscall_table[0])) && syscall_table[frame->rax]) {
+        syscall_table[frame->rax](frame);
+    } else {
+        printf("syscall: unknown/unsupported %lu\n", frame->rax);
+        frame->rax = (uint64_t)-ENOSYS;
+    }
 }
 
 void init_syscalls(void) {

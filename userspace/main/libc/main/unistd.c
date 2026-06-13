@@ -80,6 +80,14 @@ int pipe(int pipefd[2]) {
     return (int)syscall(SYS_pipe, pipefd);
 }
 
+int dup(int oldfd) {
+    return (int)syscall(SYS_dup, oldfd);
+}
+
+int dup2(int oldfd, int newfd) {
+    return (int)syscall(SYS_dup2, oldfd, newfd);
+}
+
 ssize_t read(int fd, void *buf, size_t count) {
     return (ssize_t)syscall(SYS_read, fd, (int64_t)buf, count);
 }

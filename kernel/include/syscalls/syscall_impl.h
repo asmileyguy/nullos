@@ -75,6 +75,9 @@ void sys_openat(syscall_frame_t *frame);
 void sys_unlinkat(syscall_frame_t *frame);
 void sys_symlinkat(syscall_frame_t *frame);
 void sys_fchmodat(syscall_frame_t *frame);
+void sys_writev(syscall_frame_t *frame);
+void sys_set_tid_address(syscall_frame_t *frame);
+void sys_exit_group(syscall_frame_t *frame);
 
 // Some public helpers
 bool is_mounted_under(const char* path, const char* fstype, char* relative_out);

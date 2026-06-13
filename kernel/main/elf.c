@@ -215,10 +215,23 @@ pid_t execute_elf(const char *path, char **argv, char **envp) {
     void *stack = vmalloc_user_ex(ctx, USER_STACK_SIZE);
     if (!stack) return -ENOMEM;
 
+    // AT_RANDOM must be a pointer to 16 random bytes in userspace, not a raw integer.
+    // Carve 16 bytes from the top of the stack before setup_stack moves rsp.
+    uint64_t stack_top = (uint64_t)stack + USER_STACK_SIZE - 16;
+    uint64_t rand_bytes[2] = { aslr_random_offset(0x10000) ^ (aslr_random_offset(0x10000) << 17),
+                               aslr_random_offset(0x10000) ^ (aslr_random_offset(0x10000) << 13) };
+    write_vmm(ctx, stack_top, rand_bytes, 16);
+
+    // Patch AT_RANDOM to point at those bytes on the stack
+    for (int i = 0; i < a; i++) {
+        if (auxv[i].type == AT_RANDOM) { auxv[i].un.val = stack_top; break; }
+    }
+
     char *empty_envp[] = { NULL };
     char **actual_envp = envp ? envp : empty_envp;
 
-    uint64_t v_rsp = setup_stack(ctx, (uint64_t)stack + USER_STACK_SIZE - 8, argv, actual_envp, auxv);
+    // Start rsp below the random bytes we just wrote
+    uint64_t v_rsp = setup_stack(ctx, stack_top - 8, argv, actual_envp, auxv);
 
     // Find highest loaded address
     uint64_t heap_start = 0;
@@ -311,10 +324,20 @@ int execve_elf(const char *path, char **argv, char **envp, void* raw_frame) {
     void *stack = vmalloc_user_ex(ctx, USER_STACK_SIZE);
     if (!stack) return -ENOMEM;
 
+    // AT_RANDOM must be a pointer to 16 random bytes in userspace, not a raw integer.
+    uint64_t stack_top = (uint64_t)stack + USER_STACK_SIZE - 16;
+    uint64_t rand_bytes[2] = { aslr_random_offset(0x10000) ^ (aslr_random_offset(0x10000) << 17),
+                               aslr_random_offset(0x10000) ^ (aslr_random_offset(0x10000) << 13) };
+    write_vmm(ctx, stack_top, rand_bytes, 16);
+
+    for (int i = 0; i < a; i++) {
+        if (auxv[i].type == AT_RANDOM) { auxv[i].un.val = stack_top; break; }
+    }
+
     char *empty_envp[] = { NULL };
     char **actual_envp = (envp) ? envp : empty_envp;
 
-    uint64_t v_rsp = setup_stack(ctx, (uint64_t)stack + USER_STACK_SIZE - 8, argv, actual_envp, auxv);
+    uint64_t v_rsp = setup_stack(ctx, stack_top - 8, argv, actual_envp, auxv);
 
     // Find highest loaded address
     uint64_t heap_start = 0;

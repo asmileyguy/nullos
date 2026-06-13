@@ -10,10 +10,12 @@ endif
 
 include ../../config.mk
 
-PROGS = $(patsubst main/%.c,%,$(wildcard main/*.c)) $(patsubst main/%.S,%,$(wildcard main/*.S))
+PROGS = $(filter-out hello_musl, $(patsubst main/%.c,%,$(wildcard main/*.c)) $(patsubst main/%.S,%,$(wildcard main/*.S)))
+MUSL_PROGS = hello_musl
 TARGETS = $(foreach p,$(PROGS),../../$(p))
+MUSL_TARGETS = $(foreach p,$(MUSL_PROGS),../../$(p))
 
-all: main
+all: main $(MUSL_TARGETS)
 	@needs_build=0; \
 	for p in $(PROGS); do \
 		t="../../$$p"; \
@@ -39,6 +41,25 @@ define PROG_rule
 	$(STRIP) $(STRIPFLAGS) $$@
 endef
 $(foreach p,$(PROGS),$(eval $(call PROG_rule,$(p))))
+
+define MUSL_PROG_rule
+../../$(1): main/$(1).c ../../extra/musl-install/lib/libc.a Makefile ../../config.mk
+	@printf "  %-7s %s\n" "MUSL-LD" "$(SUBDIR)/$(1)"
+	$(CC) -static -nostdlib \
+		../../extra/musl-install/lib/crt1.o \
+		../../extra/musl-install/lib/crti.o \
+		$$($(CC) -print-file-name=crtbeginT.o) \
+		$$< \
+		-I../../extra/musl-install/include \
+		-L../../extra/musl-install/lib \
+		-lc -lgcc -lgcc_eh \
+		$$($(CC) -print-file-name=crtend.o) \
+		../../extra/musl-install/lib/crtn.o \
+		-o $$@
+	# @printf "  %-7s %s\n" "STRIP" "$(SUBDIR)/$(1)"
+	# $(STRIP) $(STRIPFLAGS) $$@
+endef
+$(foreach p,$(MUSL_PROGS),$(eval $(call MUSL_PROG_rule,$(p))))
 
 clean:
 	@$(MAKE) -C main clean

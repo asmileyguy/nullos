@@ -335,17 +335,20 @@ void* vmalloc_ex(vmm_context_t* ctx, size_t size, uint64_t flags) {
     for (uint64_t i = 0; i < num_pages; i++) {
         void* phys = pmalloc();
         if (!phys) {
-            // Rollback: unmap and free all previously allocated pages
+            // Rollback: unmap and free all previously allocated pages.
+            // unmap_vmm already calls pfree internally, so don't double-free.
             uint64_t rollback_addr = (uint64_t)start_addr;
             for (uint64_t j = 0; j < mapped_count; j++) {
-                uint64_t rphys = get_vmm_phys(ctx, rollback_addr);
-                if (rphys) pfree((void*)rphys);
                 unmap_vmm(ctx, rollback_addr);
                 rollback_addr += PAGE_SIZE;
             }
             return NULL;
         }
         if (i == 0) first_phys = phys;
+
+        // Zero the physical page before mapping so userspace always gets clean memory.
+        // This satisfies MAP_ANONYMOUS semantics and prevents info leaks.
+        memset(phys_to_virt((uint64_t)phys), 0, PAGE_SIZE);
 
         map_vmm(ctx, curr_addr, (uint64_t)phys, flags | VMM_PRESENT);
         curr_addr += PAGE_SIZE;

@@ -69,7 +69,31 @@ isrrsv:
     push 512    // sentinel: reserved exception
     jmp isrhdr
 
+// Stack layout at entry to isrhdr (growing downward):
+//   [rsp+0]   = vector
+//   [rsp+8]   = error_code        (pushed by CPU or dummy 0)
+//   [rsp+16]  = rip               (pushed by CPU)
+//   [rsp+24]  = cs                (pushed by CPU)
+//   [rsp+32]  = rflags            (pushed by CPU)
+//   [rsp+40]  = rsp (user)        (pushed by CPU, ring-3 only)
+//   [rsp+48]  = ss  (user)        (pushed by CPU, ring-3 only)
+//
+// After saving all GP registers we pass a pointer to the full exception_frame_t
+// to exception_panic so it can print a complete register dump.
+
 isrhdr:
+    // Save all caller-saved and callee-saved GP registers.
+    // We push in this order so the struct layout in panic.h matches:
+    //   rdi, rsi, rdx, rcx, r8, r9, r10, r11, ds, es  (then vector/errcode/CPU frame above)
+    // Plus the extra regs not pushed yet: rax, rbx, rbp, r12, r13, r14, r15
+    push r15
+    push r14
+    push r13
+    push r12
+    push rbp
+    push rbx
+    push rax
+
     push rdi
     push rsi
     push rdx
@@ -86,15 +110,32 @@ isrhdr:
     push rax
 
     // Swap GS if we came from user space.
-    // Frame layout from RSP:
-    //   +0..+79  = saved regs (r11, r10, r9, r8, rcx, rdx, rsi, rdi, es, ds)
-    //   +80      = vector
-    //   +88      = error code
-    //   +96      = RIP
-    //   +104     = CS
-    //   +112     = RFLAGS
-    //   +120     = RSP (user)
-    mov rax, [rsp + 80 + 24]    // CS
+    // Frame layout from RSP after all pushes:
+    //   +0   = es
+    //   +8   = ds
+    //   +16  = r11
+    //   +24  = r10
+    //   +32  = r9
+    //   +40  = r8
+    //   +48  = rcx
+    //   +56  = rdx
+    //   +64  = rsi
+    //   +72  = rdi
+    //   +80  = rax
+    //   +88  = rbx
+    //   +96  = rbp
+    //   +104 = r12
+    //   +112 = r13
+    //   +120 = r14
+    //   +128 = r15
+    //   +136 = vector
+    //   +144 = error_code
+    //   +152 = rip
+    //   +160 = cs
+    //   +168 = rflags
+    //   +176 = rsp (user, ring-3 only)
+    //   +184 = ss  (user, ring-3 only)
+    mov rax, [rsp + 160]    // CS
     test al, 3
     jz .no_swap_entry
     swapgs
@@ -105,16 +146,15 @@ isrhdr:
     mov ds, ax
     mov es, ax
 
-    // exception_panic(vector, rip, rsp, cs)
-    mov rdi, [rsp + 80]         // vector number
-    mov rsi, [rsp + 80 + 16]    // rip
-    mov rdx, [rsp + 80 + 40]    // rsp
-    mov rcx, [rsp + 80 + 24]    // cs
-
+    // exception_panic(frame*)  -- RSP points at the exception_frame_t
+    mov rdi, rsp
     call exception_panic
 
+    // exception_panic is noreturn for both kernel and userspace faults,
+    // so we never reach here. The iretq path is kept only as a safety net.
+
     // Swap GS back if returning to user space
-    mov rax, [rsp + 80 + 24]    // cs
+    mov rax, [rsp + 160]    // cs
     test al, 3
     jz .no_swap_exit
     swapgs
@@ -134,6 +174,14 @@ isrhdr:
     pop rdx
     pop rsi
     pop rdi
+
+    pop rax
+    pop rbx
+    pop rbp
+    pop r12
+    pop r13
+    pop r14
+    pop r15
 
     // Clean up vector and error code
     add rsp, 16
